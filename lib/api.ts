@@ -164,7 +164,15 @@ function loginDiagnosticCode(e: unknown): string {
     case 'P2022': return 'DATABASE_COLUMN_MISSING';
     default: {
       if (typeof err?.code === 'string' && /^P\d{4}$/.test(err.code)) return `DATABASE_${err.code}`;
-      if (err?.name === 'PrismaClientInitializationError') return 'DATABASE_INITIALIZATION';
+      if (err?.name === 'PrismaClientInitializationError') {
+        const message = String((e as Error)?.message ?? '');
+        if (/environment variable.*DATABASE_URL|DATABASE_URL.*not found/i.test(message)) return 'DATABASE_URL_MISSING';
+        if (/query engine|engine.*not found|could not locate.*engine/i.test(message)) return 'PRISMA_ENGINE_MISSING';
+        if (/can't reach|cannot reach|timed out|connection refused/i.test(message)) return 'DATABASE_UNREACHABLE';
+        if (/authentication failed|password authentication failed/i.test(message)) return 'DATABASE_AUTH';
+        if (/ssl|tls|certificate/i.test(message)) return 'DATABASE_TLS';
+        return 'DATABASE_INITIALIZATION';
+      }
       if (err?.name === 'PrismaClientValidationError') return 'DATABASE_VALIDATION';
       if (err?.name === 'PrismaClientRustPanicError') return 'DATABASE_RUNTIME';
       if (err?.name === 'PrismaClientUnknownRequestError') return 'DATABASE_UNKNOWN_REQUEST';
