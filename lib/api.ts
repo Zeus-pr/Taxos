@@ -54,7 +54,10 @@ export function publicApiPost(
       }
       if (e instanceof HttpError) return deny(e.status, e.message);
       console.error('Public API error:', (e as Error).message);
-      return deny(500, friendlyServerError(e));
+      const headers = opts?.namespace === 'login'
+        ? { 'X-TaxOS-Diagnostic': loginDiagnosticCode(e) }
+        : undefined;
+      return deny(500, friendlyServerError(e), headers);
     }
   };
 }
@@ -145,6 +148,25 @@ function friendlyServerError(e: unknown): string {
   if (/password protected/i.test(msg)) return 'This file is password protected. Unlock it and upload again.';
   if (/unsupported/i.test(msg)) return 'We do not support this format yet. Try PDF, CSV or XLSX exports.';
   return 'We hit an unexpected problem while processing this. Your data was not lost — please try again, and contact support if it persists.';
+}
+
+/** Safe support signal for login failures; never includes database details or credentials. */
+function loginDiagnosticCode(e: unknown): string {
+  const err = e as { code?: unknown; name?: unknown };
+  switch (err?.code) {
+    case 'P1000': return 'DATABASE_AUTH';
+    case 'P1001': return 'DATABASE_UNREACHABLE';
+    case 'P1002': return 'DATABASE_TIMEOUT';
+    case 'P1003': return 'DATABASE_MISSING';
+    case 'P1010': return 'DATABASE_ACCESS_DENIED';
+    case 'P1011': return 'DATABASE_TLS';
+    case 'P2021': return 'DATABASE_TABLE_MISSING';
+    case 'P2022': return 'DATABASE_COLUMN_MISSING';
+    default:
+      return typeof err?.name === 'string' && err.name.startsWith('PrismaClient')
+        ? 'DATABASE_ERROR'
+        : 'INTERNAL_ERROR';
+  }
 }
 
 /* ---------------- tenant-scoped loaders (§73) ---------------- */
