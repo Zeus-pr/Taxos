@@ -162,10 +162,16 @@ function loginDiagnosticCode(e: unknown): string {
     case 'P1011': return 'DATABASE_TLS';
     case 'P2021': return 'DATABASE_TABLE_MISSING';
     case 'P2022': return 'DATABASE_COLUMN_MISSING';
-    default:
+    default: {
+      if (typeof err?.code === 'string' && /^P\d{4}$/.test(err.code)) return `DATABASE_${err.code}`;
+      if (err?.name === 'PrismaClientInitializationError') return 'DATABASE_INITIALIZATION';
+      if (err?.name === 'PrismaClientValidationError') return 'DATABASE_VALIDATION';
+      if (err?.name === 'PrismaClientRustPanicError') return 'DATABASE_RUNTIME';
+      if (err?.name === 'PrismaClientUnknownRequestError') return 'DATABASE_UNKNOWN_REQUEST';
       return typeof err?.name === 'string' && err.name.startsWith('PrismaClient')
         ? 'DATABASE_ERROR'
         : 'INTERNAL_ERROR';
+    }
   }
 }
 
