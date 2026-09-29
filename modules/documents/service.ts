@@ -54,6 +54,27 @@ export async function processDocument(
   const taxYear = String(doc.taxYear);
   const docType = String(doc.docType) as DocType;
 
+  // A prior run may have saved its extraction and then failed while writing a
+  // notification. Recover that result instead of parsing again and duplicating
+  // income / credit rows when the user retries.
+  if (String(doc.importStatus) === 'FAILED') {
+    const previous = await repo.findOne('documentExtraction', { documentId: docId });
+    if (previous) {
+      const status = previous.needsReview ? 'REVIEW_REQUIRED' : 'EXTRACTED';
+      await repo.update('document', docId, { importStatus: status, errorNote: null });
+      const extracted = previous.payload && typeof previous.payload === 'object'
+        ? previous.payload as Record<string, unknown>
+        : {};
+      return {
+        documentId: docId,
+        status,
+        summary: 'The earlier extraction was saved. It has been restored without importing the values again.',
+        needsReview: previous.needsReview ? 1 : 0,
+        extracted,
+      };
+    }
+  }
+
   await repo.update('document', docId, { importStatus: 'PROCESSING' });
   try {
     const storage = getStorage();
@@ -195,8 +216,15 @@ function labelFor(t: DocType) {
 }
 
 async function notify(userId: string, title: string, body: string) {
-  const repo = await getRepo();
-  await repo.insert('notification', { userId, title, body, read: false });
+  try {
+    const repo = await getRepo();
+    await repo.insert('notification', { userId, kind: 'DOCUMENT_PROCESSED', title, body, read: false });
+  } catch (error) {
+    // A notification is ancillary and must never change a completed extraction
+    // into a failed document or cause users to re-import its values.
+    const e = error as { name?: unknown; code?: unknown };
+    console.error('Document notification failed', { name: e?.name ?? 'Error', code: e?.code ?? 'UNKNOWN' });
+  }
 }
 
 export { validateUpload };

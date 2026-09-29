@@ -78,8 +78,12 @@ export function DocumentsClient({ docs }: { docs: any[] }) {
     try {
       const r = await fetch(`/api/documents/${id}/process`, { method: 'POST' });
       const res = await r.json();
-      setMsg(r.ok && res.ok ? { kind: 'ok', text: `Processed — ${res.result?.status ?? 'done'}.` } : { kind: 'err', text: res.error ?? 'Processing failed.' });
-      if (r.ok && res.ok) router.refresh();
+      if (r.ok && res.ok) {
+        setMsg({ kind: 'ok', text: res.result?.summary ?? `Processed — ${res.result?.status ?? 'done'}.` });
+        router.refresh();
+      } else {
+        setMsg({ kind: 'err', text: res.error ?? res.result?.summary ?? 'Processing failed.' });
+      }
     } catch {
       setMsg({ kind: 'err', text: 'We could not reach the server. Please try processing again.' });
     } finally {

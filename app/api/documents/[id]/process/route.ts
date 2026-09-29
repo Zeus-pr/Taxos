@@ -10,6 +10,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const { id } = await context.params;
   try {
     const result = await processDocument(user.id, id);
+    if (result.status === 'FAILED') {
+      return NextResponse.json({ ok: false, error: result.summary, result }, { status: 422 });
+    }
     return NextResponse.json({ ok: true, result });
   } catch (error) {
     const message = (error as Error).message;
