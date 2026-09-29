@@ -52,6 +52,35 @@ class LocalStorage implements StorageProvider {
   }
 }
 
+/** Private Vercel Blob storage for production tax documents. */
+class VercelBlobStorage implements StorageProvider {
+  async put(key: string, body: Buffer, mime: string): Promise<StoredObject> {
+    const { put } = await import('@vercel/blob');
+    const blob = await put(key, body, { access: 'private', addRandomSuffix: false, contentType: mime });
+    return { key: blob.pathname, sizeBytes: body.length, checksumSha256: sha256(body), mimeType: mime };
+  }
+  async get(key: string): Promise<Buffer | null> {
+    const { get } = await import('@vercel/blob');
+    const result = await get(key, { access: 'private' });
+    if (!result || result.statusCode !== 200 || !result.stream) return null;
+    const chunks: Buffer[] = [];
+    const reader = result.stream.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks);
+  }
+  async delete(key: string): Promise<void> {
+    const { del } = await import('@vercel/blob');
+    await del(key);
+  }
+  async signedUrl(key: string): Promise<string> {
+    return `/api/documents/download?pathname=${encodeURIComponent(key)}`;
+  }
+}
+
 function sha256(b: Buffer) { return createHash('sha256').update(b).digest('hex'); }
 function sign(key: string, exp: string): string {
   const secret = process.env.STORAGE_SIGNING_SECRET ?? 'dev-only-signing-secret-change-me';
@@ -68,12 +97,17 @@ export function verifySignedUrl(key: string, exp: string, sig: string): boolean 
 let _provider: StorageProvider | null = null;
 export function getStorage(): StorageProvider {
   if (_provider) return _provider;
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    _provider = new VercelBlobStorage();
+    return _provider;
+  }
   const endpoint = process.env.STORAGE_ENDPOINT;
   if (endpoint) {
     // S3/R2-compatible provider would be initialised here with STORAGE_ACCESS_KEY/SECRET_KEY/BUCKET.
     // Not activated until credentials are configured — we never fake a working remote integration (§71).
     throw new Error('Remote storage is configured but the S3/R2 driver requires verified credentials. Set STORAGE_* env vars or leave unset to use local dev storage.');
   }
+  if (process.env.VERCEL) throw new Error('Private document storage is not configured. Connect a private Vercel Blob store to enable uploads.');
   _provider = new LocalStorage(process.env.LOCAL_STORAGE_DIR ?? './storage');
   return _provider;
 }

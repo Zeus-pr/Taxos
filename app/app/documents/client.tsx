@@ -2,6 +2,7 @@
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { upload as uploadFile } from '@vercel/blob/client';
 import { StatusPill } from '@/components/ui';
 
 export function DocumentsClient({ docs }: { docs: any[] }) {
@@ -9,31 +10,51 @@ export function DocumentsClient({ docs }: { docs: any[] }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
-  const [progress, setProgress] = useState<Record<string, number>>({});
+  const [progress, setProgress] = useState<Record<string, { name: string; percent: number; state?: 'done' | 'error'; error?: string }>>({});
 
   async function upload(files: FileList | null) {
     if (!files || files.length === 0) return;
     setBusy(true); setMsg(null);
     for (const f of Array.from(files)) {
-      const fd = new FormData(); fd.append('file', f); fd.append('name', f.name);
-      setProgress(p => ({ ...p, [f.name]: 5 }));
-      const r = await fetch('/api/documents', { method: 'POST', body: fd });
-      const res = await r.json();
-      setProgress(p => ({ ...p, [f.name]: 100 }));
-      if (!res.ok) setMsg({ kind: 'err', text: `${f.name}: ${res.error ?? 'Upload failed.'}` });
-      else setMsg({ kind: 'ok', text: `${f.name}: ${res.document?.status === 'PROCESSING' ? 'queued for processing' : 'uploaded'} (${res.document?.docType ?? 'type pending'}).` });
+      const key = `${f.name}-${f.size}-${f.lastModified}`;
+      setProgress(p => ({ ...p, [key]: { name: f.name, percent: 0 } }));
+      try {
+        if (f.size === 0) throw new Error('This file is empty.');
+        if (f.size > 20 * 1024 * 1024) throw new Error('Choose a file smaller than 20 MB.');
+        const contentType = f.type || (f.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
+        await uploadFile(`taxos-documents/${f.name.replace(/[\\/\0\r\n]/g, '_')}`, f, {
+          access: 'private',
+          handleUploadUrl: '/api/documents',
+          clientPayload: JSON.stringify({ fileName: f.name, size: f.size }),
+          contentType,
+          multipart: f.size > 4 * 1024 * 1024,
+          onUploadProgress: ({ percentage }) => setProgress(p => ({ ...p, [key]: { name: f.name, percent: Math.round(percentage) } })),
+        });
+        setProgress(p => ({ ...p, [key]: { name: f.name, percent: 100, state: 'done' } }));
+        setMsg({ kind: 'ok', text: `${f.name}: uploaded securely. Select Process to extract its details.` });
+      } catch (error) {
+        const message = (error as Error).message || 'Upload failed. Please try again.';
+        setProgress(p => ({ ...p, [key]: { name: f.name, percent: 0, state: 'error', error: message } }));
+        setMsg({ kind: 'err', text: `${f.name}: ${message}` });
+      }
     }
-    setBusy(false); setTimeout(() => setProgress({}), 800);
+    setBusy(false);
     router.refresh();
     if (fileRef.current) fileRef.current.value = '';
   }
 
   async function process(id: string) {
     setBusy(true);
-    const r = await fetch(`/api/documents/${id}/process`, { method: 'POST' });
-    const res = await r.json(); setBusy(false);
-    setMsg(res.ok ? { kind: 'ok', text: `Processed — ${res.result?.status ?? 'done'}.` } : { kind: 'err', text: res.error ?? 'Processing failed.' });
-    router.refresh();
+    try {
+      const r = await fetch(`/api/documents/${id}/process`, { method: 'POST' });
+      const res = await r.json();
+      setMsg(r.ok && res.ok ? { kind: 'ok', text: `Processed — ${res.result?.status ?? 'done'}.` } : { kind: 'err', text: res.error ?? 'Processing failed.' });
+      if (r.ok && res.ok) router.refresh();
+    } catch {
+      setMsg({ kind: 'err', text: 'We could not reach the server. Please try processing again.' });
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -47,8 +68,8 @@ export function DocumentsClient({ docs }: { docs: any[] }) {
         <span className="text-xs text-neutral-400">We never ask for portal or bank passwords. Files are validated and scanned before processing.</span>
         <input ref={fileRef} type="file" multiple className="hidden" accept=".pdf,.csv,.xlsx,.json,.txt,.html" onChange={e => upload(e.target.files)} disabled={busy} />
       </label>
-      {Object.entries(progress).map(([name, pct]) => (
-        <div key={name} className="flex items-center gap-3 text-xs text-neutral-500"><span className="w-40 truncate">{name}</span><div className="h-1.5 flex-1 rounded-full bg-neutral-200"><div className="h-full rounded-full bg-neutral-900 transition-all" style={{ width: `${pct}%` }} /></div><span>{pct}%</span></div>
+      {Object.entries(progress).map(([key, item]) => (
+        <div key={key} className={`flex items-center gap-3 text-xs ${item.state === 'error' ? 'text-red-700' : 'text-neutral-500'}`}><span className="w-40 truncate">{item.name}</span><div className="h-1.5 flex-1 rounded-full bg-neutral-200"><div className={`h-full rounded-full transition-all ${item.state === 'error' ? 'bg-red-600' : 'bg-neutral-900'}`} style={{ width: `${item.percent}%` }} /></div><span>{item.state === 'error' ? 'Failed' : item.state === 'done' ? 'Uploaded' : `${item.percent}%`}</span>{item.error && <span className="max-w-xs">{item.error}</span>}</div>
       ))}
 
       <section className="card overflow-x-auto p-6">
@@ -67,7 +88,7 @@ export function DocumentsClient({ docs }: { docs: any[] }) {
                     {(d.status === 'UPLOADED' || d.status === 'FAILED') && <button className="mr-3 text-xs underline" disabled={busy} onClick={() => process(d.id)}>Process</button>}
                     <a className="mr-3 text-xs underline" href={`/api/documents/${d.id}/download`}>Download</a>
                     <Link className="mr-3 text-xs underline" href={`/app/review/${d.id}`}>Review</Link>
-                    <button className="text-xs text-red-600 underline" disabled={busy} onClick={async () => { setBusy(true); await fetch(`/api/documents/${d.id}`, { method: 'DELETE' }); setBusy(false); router.refresh(); }}>Delete</button>
+                    <button className="text-xs text-red-600 underline" disabled={busy} onClick={async () => { setBusy(true); try { const r = await fetch(`/api/documents/${d.id}`, { method: 'DELETE' }); const res = await r.json(); if (!r.ok || !res.ok) setMsg({ kind: 'err', text: res.error ?? 'Could not delete this file.' }); else { setMsg(null); router.refresh(); } } catch { setMsg({ kind: 'err', text: 'We could not reach the server. Please try again.' }); } finally { setBusy(false); } }}>Delete</button>
                   </td>
                 </tr>
               ))}

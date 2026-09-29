@@ -8,5 +8,9 @@ export default async function Page() {
   const { getRepo } = await import('@/lib/db/repo');
   const repo = await getRepo();
   const docs = (await repo.findMany('document', { userId: user.id })).filter(d => !d.deletedAt);
-  return <DocumentsClient docs={JSON.parse(JSON.stringify(docs))} />;
+  const view = docs.map(d => ({
+    id: d.id, name: d.fileName, docType: d.docType, status: d.importStatus,
+    sizeBytes: d.sizeBytes, createdAt: d.createdAt, errorNote: d.errorNote,
+  }));
+  return <DocumentsClient docs={JSON.parse(JSON.stringify(view))} />;
 }

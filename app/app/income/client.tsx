@@ -23,10 +23,17 @@ export function IncomeClient({ data }: { data: { incomes: any[]; deductions: any
 
   async function call(url: string, body: unknown, method = 'POST') {
     setBusy(true); setErr(null);
-    const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const res = await r.json(); setBusy(false);
-    if (!res.ok) setErr(res.error ?? 'Something did not work.'); else router.refresh();
-    return res.ok;
+    try {
+      const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const res = await r.json();
+      if (!r.ok || !res.ok) setErr(res.error ?? 'Something did not work.'); else router.refresh();
+      return r.ok && res.ok;
+    } catch {
+      setErr('We could not reach the server. Your entry has not been cleared; please try again.');
+      return false;
+    } finally {
+      setBusy(false);
+    }
   }
 
   const total = data.incomes.reduce((s, i) => s + Math.max(0, i.amount_paise), 0);
@@ -42,7 +49,7 @@ export function IncomeClient({ data }: { data: { incomes: any[]; deductions: any
           <select className="input" value={inc.category} onChange={e => setInc({ ...inc, category: e.target.value })}>{CATEGORIES.map(c => <option key={c} value={c}>{CATEGORY_LABELS[c] ?? c}</option>)}</select>
           <input className="input num" placeholder="Amount ₹" value={inc.amount} onChange={e => setInc({ ...inc, amount: e.target.value })} />
           <input className="input" placeholder="Description (optional)" value={inc.description} onChange={e => setInc({ ...inc, description: e.target.value })} />
-          <button className="btn-primary" disabled={busy || !Number(inc.amount)} onClick={() => { if (Number(inc.amount) > 0) call('/api/income', { category: inc.category, amountRupees: Number(inc.amount), description: inc.description || undefined }).then(() => setInc({ ...inc, amount: '', description: '' })); }}>Add</button>
+          <button className="btn-primary" disabled={busy || !Number(inc.amount)} onClick={() => { if (Number(inc.amount) > 0) call('/api/income', { category: inc.category, amountRupees: Number(inc.amount), description: inc.description || undefined }).then(ok => { if (ok) setInc({ ...inc, amount: '', description: '' }); }); }}>Add</button>
         </div>
       </section>
 
@@ -76,7 +83,7 @@ export function IncomeClient({ data }: { data: { incomes: any[]; deductions: any
         <div className="grid gap-4 sm:grid-cols-[1fr_1fr_auto]">
           <select className="input" value={ded.section} onChange={e => { const d = DEDUCTIONS.find(x => x.section === e.target.value)!; setDed({ section: d.section, label: d.label, amount: ded.amount }); }}>{DEDUCTIONS.map(d => <option key={d.section} value={d.section}>{d.label}</option>)}</select>
           <input className="input num" placeholder="Amount ₹" value={ded.amount} onChange={e => setDed({ ...ded, amount: e.target.value })} />
-          <button className="btn-primary" disabled={busy || !Number(ded.amount)} onClick={() => { if (Number(ded.amount) > 0) call('/api/income/deductions', ded).then(() => setDed({ ...ded, amount: '' })); }}>Add</button>
+          <button className="btn-primary" disabled={busy || !Number(ded.amount)} onClick={() => { if (Number(ded.amount) > 0) call('/api/income/deductions', ded).then(ok => { if (ok) setDed({ ...ded, amount: '' }); }); }}>Add</button>
         </div>
         {data.deductions.length > 0 && (
           <ul className="mt-4 divide-y divide-neutral-100 text-sm">
