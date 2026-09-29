@@ -11,8 +11,10 @@ export default async function Page({ params }: { params: Promise<{ documentId: s
   // Tenant scoping (§38): document must belong to the session user.
   const doc = await repo.findOne('document', { id: documentId, userId: user.id });
   if (!doc) return <p className="card p-8 text-sm">Document not found.</p>;
-  const extractions = await repo.findMany('extraction', { documentId });
-  const records = await repo.findMany('incomeRecord', { userId: user.id, taxYear: doc.taxYear ?? undefined });
-  const mapped = extractions.map(e => ({ ...e, record: records.find(r => r.documentId === documentId && r.category === e.category) ?? null }));
-  return <ReviewClient doc={JSON.parse(JSON.stringify(doc))} extractions={JSON.parse(JSON.stringify(mapped))} />;
+  const [extractions, records] = await Promise.all([
+    repo.findMany('documentExtraction', { documentId }),
+    repo.findMany('incomeRecord', { userId: user.id, taxYear: doc.taxYear, sourceDocumentId: documentId }),
+  ]);
+  extractions.sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')));
+  return <ReviewClient doc={JSON.parse(JSON.stringify(doc))} extractions={JSON.parse(JSON.stringify(extractions))} records={JSON.parse(JSON.stringify(records))} />;
 }
