@@ -97,10 +97,11 @@ export function calculateTax(req: CalcRequest): TaxCalculation {
     lines.push({ category: 'CG_112', description: 'LTCG without indexation @ 12.5%', baseAmount: cg.ltcg112, rate: 0.125, taxAmount: t, source: 'capital-gains', ruleId: CAPITAL_GAINS_RULES.meta.ruleId });
   }
 
-  // Rebate 87A applies only to slab-rate tax
-  const qualifyingIncome = taxableOrdinary + cg.slabGains; // total income for rebate purposes (V1 approximation: taxable ordinary)
-  const reb = rebate87A(req.regime, qualifyingIncome, slabRes.tax);
-  if (reb.rebate > 0) lines.push({ category: 'REBATE', description: 'Section 87A rebate', baseAmount: qualifyingIncome, rate: null, taxAmount: -reb.rebate, source: 'tax-engine', ruleId: reb.ruleId });
+  // Eligibility and marginal relief use total taxable income; the rebate itself
+  // can only reduce slab-rate tax, never tax charged at special capital-gain rates.
+  const qualifyingIncome = taxableOrdinary + cg.slabGains + cg.stcg111A + cg.ltcg112A + cg.ltcg112;
+  const reb = rebate87A(req.regime, qualifyingIncome, slabRes.tax, req.taxpayer.isResident);
+  if (reb.rebate > 0) lines.push({ category: 'REBATE', description: 'Section 87A rebate / marginal relief', baseAmount: qualifyingIncome, rate: null, taxAmount: -reb.rebate, source: 'tax-engine', ruleId: reb.ruleId });
   const slabTaxAfterRebate = Math.max(0, slabRes.tax - reb.rebate);
 
   // Surcharge & cess on total income level

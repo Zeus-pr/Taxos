@@ -18,7 +18,7 @@ import type { SlabRule, RuleMeta } from '../../types';
 export const TAX_YEAR = '2026-27';
 export const ASSESSMENT_YEAR = 'AY 2027-28';
 export const LAW_VERSION = 'Income Tax Act, 1961 as amended by Finance (No. 2) Act 2025 / New Income-tax Act 2025 framework applicable from 2026-27';
-export const RULE_SET_VERSION = '2026-27.1';
+export const RULE_SET_VERSION = '2026-27.2';
 
 const SRC = 'https://pib.gov.in/PressNoteDetails.aspx?NoteId=1535228&Lang=1';
 const RETRIEVED = '2026-09-29';
@@ -99,16 +99,16 @@ export const OLD_REGIME_SLABS_SUPER_SENIOR: SlabRule = {
 
 /** Section 87A rebate — AY 2027-28.
  *  New regime: ₹60,000 rebate for total income ≤ ₹12,00,000.
- *  Old regime: ₹5,000 rebate for taxable income ≤ ₹5,00,000. */
+ *  Old regime: ₹12,500 rebate for taxable income ≤ ₹5,00,000. */
 export const REBATE_87A_NEW = {
   meta: meta('REBATE-87A-NEW-2026-27', 's.87A as amended — new regime rebate ₹60,000 up to ₹12 lakh'),
   maxIncome: L(1200000),
   maxRebate: L(60000),
 };
 export const REBATE_87A_OLD = {
-  meta: meta('REBATE-87A-OLD-2026-27', 's.87A — old regime ₹5,000 up to ₹5 lakh'),
+  meta: meta('REBATE-87A-OLD-2026-27', 's.87A — old regime ₹12,500 up to ₹5 lakh'),
   maxIncome: L(500000),
-  maxRebate: L(5000),
+  maxRebate: L(12500),
 };
 
 /** Surcharge — unchanged AY 2027-28 (caps also unchanged this year). */
