@@ -142,6 +142,7 @@ model TaxProfile {
   panEncrypted     String? // AES-256-GCM at rest (§38)
   taxpayerCategory String  @default("INDIVIDUAL")
   employmentType   String?
+  regime           String  @default("NEW")
   isSalaried       Boolean @default(true)
   isInvestor       Boolean @default(false)
   hasCapitalGains  Boolean @default(false)

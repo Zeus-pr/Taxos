@@ -11,7 +11,7 @@ const Schema = z.object({
   taxYear: z.enum(supportedTaxYears() as [string, ...string[]]),
   name: z.string().min(1).max(120),
   dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  residentialStatus: z.enum(['RESIDENT', 'NRI', 'ORDINARY_RESIDENT']),
+  residentialStatus: z.enum(['RESIDENT', 'NRI', 'ORDINARY_RESIDENT', 'NON_RESIDENT']),
   state: z.string().max(60).optional(),
   pan: z.string().regex(PAN_RE).optional(),
   taxpayerCategory: z.enum(['INDIVIDUAL', 'HUF']).default('INDIVIDUAL'),

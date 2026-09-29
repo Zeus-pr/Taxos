@@ -25,7 +25,8 @@ export function OnboardingClient({ defaultName, years, existing }: { defaultName
 
   async function finish() {
     setBusy(true); setErr(null);
-    const r = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(f) });
+    const { discovery, ...profile } = f;
+    const r = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...profile, incomeDiscovery: discovery }) });
     const res = await r.json(); setBusy(false);
     if (!res.ok) return setErr(res.error ?? 'Could not save. Please check the highlighted fields.');
     router.push('/app'); router.refresh();
