@@ -1,4 +1,4 @@
-import { del, get } from '@vercel/blob';
+import { del, get, put } from '@vercel/blob';
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { audit } from '@/lib/audit';
@@ -15,6 +15,12 @@ const ALLOWED_CONTENT_TYPES = [
 ];
 
 type UploadMetadata = { userId: string; taxYear: string; fileName: string };
+
+class UploadRequestError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
 
 function safeName(value: unknown): string {
   return String(value ?? 'document').replace(/[\\/\0\r\n]/g, '_').trim().slice(-180) || 'document';
@@ -50,19 +56,72 @@ function inferredMime(kind: string): string {
   }
 }
 
+async function saveDirectUpload(request: NextRequest) {
+  const user = await currentUser(request);
+  if (!user) throw new UploadRequestError(401, 'Please sign in again before uploading.');
+
+  const form = await request.formData();
+  const file = form.get('file');
+  if (!(file instanceof File)) throw new UploadRequestError(400, 'Choose a file to upload.');
+  if (file.size === 0) throw new UploadRequestError(400, 'This file is empty.');
+  if (file.size > 4 * 1024 * 1024) throw new UploadRequestError(413, 'This file is too large for the backup upload. Please retry the secure upload or choose a file under 4 MB.');
+
+  const repo = await getRepo();
+  const profiles = await repo.findMany('taxProfile', { userId: user.id });
+  const profile = profiles.sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))[0];
+  if (!profile) throw new UploadRequestError(409, 'Complete your tax profile before uploading documents.');
+
+  const fileName = safeName(file.name);
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const validation = validateUpload({ name: fileName, size: buffer.length, buffer });
+  if (!validation.ok || !validation.kind || !validation.checksum) {
+    throw new UploadRequestError(400, validation.error ?? 'This file could not be verified.');
+  }
+
+  const blob = await put(`taxos-documents/${user.id}/${fileName}`, buffer, {
+    access: 'private',
+    addRandomSuffix: true,
+    contentType: file.type || inferredMime(validation.kind),
+  });
+
+  try {
+    await repo.insert('document', {
+      userId: user.id,
+      taxYear: String(profile.taxYear),
+      docType: docTypeFor(fileName),
+      fileName,
+      storageKey: blob.pathname,
+      mimeType: file.type || inferredMime(validation.kind),
+      sizeBytes: buffer.length,
+      checksum: validation.checksum,
+      importStatus: 'UPLOADED',
+    });
+    await audit(user.id, 'DOCUMENT_UPLOADED', { taxYear: String(profile.taxYear), sizeBytes: buffer.length });
+  } catch (error) {
+    await del(blob.pathname).catch(() => undefined);
+    throw error;
+  }
+
+  return NextResponse.json({ ok: true, message: 'Uploaded securely.' });
+}
+
 export async function POST(request: NextRequest) {
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     return NextResponse.json({ ok: false, error: 'Private document storage is not connected yet. In Vercel, create a private Blob store for this project and connect it to Production.' }, { status: 503 });
   }
 
   try {
+    if (request.headers.get('content-type')?.includes('multipart/form-data')) {
+      return await saveDirectUpload(request);
+    }
+
     const body = await request.json() as HandleUploadBody;
     const result = await handleUpload({
       body,
       request,
       onBeforeGenerateToken: async (_pathname, clientPayload) => {
         const user = await currentUser(request);
-        if (!user) throw new Error('TAXOS_AUTH_REQUIRED');
+        if (!user) throw new UploadRequestError(401, 'Please sign in again before uploading.');
 
         let metadata: { fileName?: string; size?: number } = {};
         try { metadata = JSON.parse(clientPayload ?? '{}'); } catch { throw new Error('Invalid upload metadata.'); }
@@ -74,7 +133,7 @@ export async function POST(request: NextRequest) {
         const repo = await getRepo();
         const profiles = await repo.findMany('taxProfile', { userId: user.id });
         const profile = profiles.sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))[0];
-        if (!profile) throw new Error('Complete your tax profile before uploading documents.');
+        if (!profile) throw new UploadRequestError(409, 'Complete your tax profile before uploading documents.');
 
         return {
           allowedContentTypes: ALLOWED_CONTENT_TYPES,
@@ -130,8 +189,14 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
-    const message = (error as Error).message ?? '';
-    const status = message === 'TAXOS_AUTH_REQUIRED' ? 401 : 400;
-    return NextResponse.json({ ok: false, error: status === 401 ? 'Please sign in to continue.' : message || 'The upload could not be completed.' }, { status });
+    const uploadError = error instanceof UploadRequestError ? error : null;
+    if (!uploadError) {
+      const e = error as { name?: unknown; code?: unknown };
+      console.error('Document upload failed', { name: e?.name ?? 'Error', code: e?.code ?? 'UNKNOWN' });
+    }
+    return NextResponse.json({
+      ok: false,
+      error: uploadError?.message ?? 'Secure upload could not start. Please retry; if it continues, contact support.',
+    }, { status: uploadError?.status ?? 500 });
   }
 }

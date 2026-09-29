@@ -10,26 +10,41 @@ export function DocumentsClient({ docs }: { docs: any[] }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
-  const [progress, setProgress] = useState<Record<string, { name: string; percent: number; state?: 'done' | 'error'; error?: string }>>({});
+  const [progress, setProgress] = useState<Record<string, { name: string; percent: number; state?: 'preparing' | 'uploading' | 'fallback' | 'done' | 'error'; error?: string }>>({});
 
   async function upload(files: FileList | null) {
     if (!files || files.length === 0) return;
     setBusy(true); setMsg(null);
     for (const f of Array.from(files)) {
       const key = `${f.name}-${f.size}-${f.lastModified}`;
-      setProgress(p => ({ ...p, [key]: { name: f.name, percent: 0 } }));
+      setProgress(p => ({ ...p, [key]: { name: f.name, percent: 0, state: 'preparing' } }));
       try {
         if (f.size === 0) throw new Error('This file is empty.');
         if (f.size > 20 * 1024 * 1024) throw new Error('Choose a file smaller than 20 MB.');
         const contentType = f.type || (f.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
-        await uploadFile(`taxos-documents/${f.name.replace(/[\\/\0\r\n]/g, '_')}`, f, {
-          access: 'private',
-          handleUploadUrl: '/api/documents',
-          clientPayload: JSON.stringify({ fileName: f.name, size: f.size }),
-          contentType,
-          multipart: f.size > 4 * 1024 * 1024,
-          onUploadProgress: ({ percentage }) => setProgress(p => ({ ...p, [key]: { name: f.name, percent: Math.round(percentage) } })),
-        });
+        try {
+          await uploadFile(`taxos-documents/${f.name.replace(/[\\/\0\r\n]/g, '_')}`, f, {
+            access: 'private',
+            handleUploadUrl: '/api/documents',
+            clientPayload: JSON.stringify({ fileName: f.name, size: f.size }),
+            contentType,
+            multipart: f.size > 4 * 1024 * 1024,
+            onUploadProgress: ({ percentage }) => setProgress(p => ({ ...p, [key]: { name: f.name, percent: Math.round(percentage), state: 'uploading' } })),
+          });
+        } catch (error) {
+          const message = (error as Error).message || '';
+          if (!/failed to\s+retrieve the client token/i.test(message)) throw error;
+          if (f.size > 4 * 1024 * 1024) {
+            throw new Error('Secure upload permission could not be issued. The file was not sent; please retry once or contact support.');
+          }
+
+          setProgress(p => ({ ...p, [key]: { name: f.name, percent: 0, state: 'fallback' } }));
+          const form = new FormData();
+          form.set('file', f);
+          const response = await fetch('/api/documents', { method: 'POST', body: form });
+          const result = await response.json();
+          if (!response.ok || !result.ok) throw new Error(result.error ?? 'The backup upload could not be completed.');
+        }
         setProgress(p => ({ ...p, [key]: { name: f.name, percent: 100, state: 'done' } }));
         setMsg({ kind: 'ok', text: `${f.name}: uploaded securely. Select Process to extract its details.` });
       } catch (error) {
@@ -69,7 +84,7 @@ export function DocumentsClient({ docs }: { docs: any[] }) {
         <input ref={fileRef} type="file" multiple className="hidden" accept=".pdf,.csv,.xlsx,.json,.txt,.html" onChange={e => upload(e.target.files)} disabled={busy} />
       </label>
       {Object.entries(progress).map(([key, item]) => (
-        <div key={key} className={`flex items-center gap-3 text-xs ${item.state === 'error' ? 'text-red-700' : 'text-neutral-500'}`}><span className="w-40 truncate">{item.name}</span><div className="h-1.5 flex-1 rounded-full bg-neutral-200"><div className={`h-full rounded-full transition-all ${item.state === 'error' ? 'bg-red-600' : 'bg-neutral-900'}`} style={{ width: `${item.percent}%` }} /></div><span>{item.state === 'error' ? 'Failed' : item.state === 'done' ? 'Uploaded' : `${item.percent}%`}</span>{item.error && <span className="max-w-xs">{item.error}</span>}</div>
+        <div key={key} className={`flex items-center gap-3 text-xs ${item.state === 'error' ? 'text-red-700' : 'text-neutral-500'}`}><span className="w-40 truncate">{item.name}</span><div className="h-1.5 flex-1 rounded-full bg-neutral-200"><div className={`h-full rounded-full transition-all ${item.state === 'error' ? 'bg-red-600' : 'bg-neutral-900'}`} style={{ width: `${item.percent}%` }} /></div><span>{item.state === 'preparing' ? 'Preparing' : item.state === 'fallback' ? 'Retrying securely' : item.state === 'error' ? 'Failed' : item.state === 'done' ? 'Uploaded' : `${item.percent}%`}</span>{item.error && <span className="max-w-xs">{item.error}</span>}</div>
       ))}
 
       <section className="card overflow-x-auto p-6">
